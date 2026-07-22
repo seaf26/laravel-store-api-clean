@@ -72,18 +72,21 @@ inferring safety from sequential lightweight-database tests.
 **Why this priority**: Row-lock behavior is database-specific and is central to stock
 integrity.
 
-**Independent Test**: Start two independent order attempts behind a shared barrier for a
-single remaining unit; exactly one succeeds, one fails for insufficient stock, one order
-exists, and stock is zero on each production-compatible database job.
+**Independent Test**: Start two independent order attempts behind a shared barrier for both
+a single remaining unit and shared multi-unit stock. In each case, committed quantities
+never exceed stock and the losing request observes the winner's committed decrement.
 
 **Acceptance Scenarios**:
 
 1. **Given** one unit and two eligible buyers, **When** their independent order processes
    are released together, **Then** exactly one order succeeds and stock never becomes
    negative.
-2. **Given** a production-database CI job, **When** the full suite runs, **Then** the real
+2. **Given** stock of three and two eligible buyers requesting two units each, **When** their
+   independent processes are released together, **Then** one order succeeds, one receives
+   insufficient stock, and one unit remains.
+3. **Given** a production-database CI job, **When** the full suite runs, **Then** the real
    overlap test executes rather than being reported as skipped.
-3. **Given** a lightweight local database or unavailable process support, **When** the
+4. **Given** a lightweight local database or unavailable process support, **When** the
    suite runs, **Then** the specialized test skips with an explicit environmental reason
    while the fast suite remains green.
 
@@ -150,7 +153,8 @@ validation response while valid queries retain their current results.
 - **FR-008**: A back-in-stock subscription MUST remain until its durable notification is
   created and MUST be consumed after delivery or confirmed duplicate delivery.
 - **FR-009**: The concurrency acceptance test MUST launch at least two independent
-  processes, synchronize their start, and use a shared production-compatible database.
+  processes, synchronize their start, use a shared production-compatible database, and
+  cover both last-unit and competing multi-unit demand for one product.
 - **FR-010**: Automated review MUST execute the overlap test against both supported
   production database families.
 - **FR-011**: Environments that cannot provide production locking or independent process
@@ -200,9 +204,9 @@ validation response while valid queries retain their current results.
   broken image references and zero untracked unused files.
 - **SC-002**: Ten repeated deliveries of one logical notification produce exactly one
   in-app record and no more than one SMS attempt for the recipient.
-- **SC-003**: Two overlapping buyers for one remaining unit produce exactly one order, one
-  insufficient-stock result, and final stock of zero in every supported production
-  locking environment.
+- **SC-003**: In every supported production locking environment, two overlapping buyers
+  for one remaining unit produce one order and final stock zero; two buyers each requesting
+  two from stock three produce one order, one insufficient-stock result, and final stock one.
 - **SC-004**: Every documented invalid listing parameter returns `422` with its field name
   present in the error object.
 - **SC-005**: All previously valid listing, product-management, notification, and ordering

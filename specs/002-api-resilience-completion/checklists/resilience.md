@@ -29,7 +29,7 @@
 
 - [x] CHK013 Can image consistency be measured as zero broken references and zero untracked unused files? [Measurability, Spec §SC-001]
 - [x] CHK014 Is notification deduplication quantified across repeated delivery attempts? [Measurability, Spec §SC-002]
-- [x] CHK015 Is the one-unit concurrency invariant objectively defined for every production locking environment? [Measurability, Spec §SC-003]
+- [x] CHK015 Are the last-unit and competing multi-unit stock invariants objectively defined for every production locking environment? [Measurability, Spec §SC-003]
 - [x] CHK016 Are invalid listing results measurable through status and field-addressable errors? [Measurability, Spec §SC-004]
 
 ## Recovery and Edge Cases

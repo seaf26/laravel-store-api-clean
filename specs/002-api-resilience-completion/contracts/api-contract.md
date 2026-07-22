@@ -2,6 +2,14 @@
 
 Unlisted success bodies, authentication, and authorization remain unchanged.
 
+## Concurrent order stock
+
+Applies to `POST /api/orders`. Product rows are locked while stock is checked and
+decremented, so concurrent requests for the same product are evaluated in commit order.
+An accepted request retains the existing `201` response. A request whose complete quantity
+is no longer available returns the existing `422` `Insufficient stock.` envelope and does
+not create an order, create order items, or decrement any stock.
+
 ## Product listing validation
 
 Applies to `GET /api/products`.

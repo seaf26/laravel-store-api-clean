@@ -80,7 +80,8 @@ makes a real Twilio call) and is fully self-contained.
 GitHub Actions runs Composer validation and the locked-dependency security audit, Pint,
 and the full SQLite suite on every push and pull request. Dedicated MySQL 8 and PostgreSQL
 16 jobs first run the production concurrency tests with two independent PHP processes,
-then run the complete suite against that database engine.
+including competing multi-unit orders for the same product, then run the complete suite
+against that database engine.
 
 ---
 
@@ -356,9 +357,10 @@ All listeners are `ShouldQueue` + `afterCommit`.
 - It is **all-or-nothing**: if any requested quantity is short, the whole transaction rolls
   back — no order, no items, no partial stock change (`422 Insufficient stock.`).
 - Row-level locking is enforced on MySQL/Postgres. The production concurrency test launches
-  two independent PHP processes behind a shared barrier and proves one remaining stock unit
-  creates exactly one order on both engines. SQLite stays the fast development/test path and
-  skips this engine-specific proof.
+  two independent PHP processes behind a shared barrier. It proves both that one remaining
+  unit creates exactly one order and that two buyers each requesting two units from stock of
+  three produce one order, one `422`, and final stock of one. SQLite stays the fast
+  development/test path and skips these engine-specific proofs.
 - **Unit price is snapshotted** on each order item, so later product price edits never
   change an existing order's totals. Money is computed with bcmath.
 - **Cancelling an order restocks its items**, in the same transaction as the status change

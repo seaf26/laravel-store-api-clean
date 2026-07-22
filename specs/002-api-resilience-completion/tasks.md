@@ -72,7 +72,8 @@ implementation is added.
 
 **Goal**: Independent processes prove order locking and notification uniqueness on both production databases.
 
-**Independent Test**: Two barrier-synchronized child processes race one unit and one logical notification.
+**Independent Test**: Two barrier-synchronized child processes race last-unit stock,
+competing multi-unit stock, and one logical notification.
 
 ### Tests and Harness for User Story 3
 
@@ -113,6 +114,9 @@ implementation is added.
 - [x] T033 Run Pint, Composer strict validation/audit, PHP syntax, Postman JSON, workflow YAML, schedule, and `git diff --check`
 - [x] T034 Review the final diff rooted at `.` for public-contract drift, filesystem rollback gaps, duplicate delivery windows, database portability, and unrelated user changes
 - [x] T035 Update all task checkboxes and append exact verification results to `specs/002-api-resilience-completion/tasks.md`
+- [x] T036 Extend the order worker with an explicit quantity and prove that two buyers each
+  requesting two units from stock three produce one order, one rejection, and stock one on
+  MySQL and PostgreSQL
 
 ---
 
@@ -148,12 +152,13 @@ implementation is added.
 ## Completion Verification (2026-07-22)
 
 - Focused changed-behavior regression: 63 tests passed, 233 assertions.
-- SQLite full suite: 154 tests; 152 passed, 2 production-engine concurrency tests skipped,
-  688 assertions.
-- MySQL 8 full suite: 154 tests passed, 705 assertions.
-- PostgreSQL 16 full suite: 154 tests passed, 705 assertions.
-- Independent-process concurrency gate: 2 tests passed and 17 assertions on each of MySQL
-  8 and PostgreSQL 16 with skipped tests treated as failures.
+- SQLite full suite: 166 tests; 163 passed, 3 production-engine concurrency tests skipped,
+  806 assertions.
+- MySQL 8 full suite: 166 tests passed, 833 assertions.
+- PostgreSQL 16 full suite: 166 tests passed, 833 assertions.
+- Independent-process concurrency gate: 3 tests passed and 27 assertions on each of MySQL
+  8 and PostgreSQL 16 with skipped tests treated as failures. This includes the last-unit,
+  competing multi-unit, and notification-deduplication races.
 - Pending-file-deletion migration was rolled back and reapplied against a disposable SQLite
   database while product image paths, notification rows, and stock subscriptions remained.
 - Pint, PHP syntax, strict Composer validation, locked dependency audit, Postman JSON,

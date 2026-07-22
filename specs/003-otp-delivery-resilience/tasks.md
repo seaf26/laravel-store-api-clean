@@ -98,9 +98,9 @@ the simulated non-duplicate order error into a missing-replay lookup.
 ## Completion Evidence (2026-07-22)
 
 - Lifecycle migration up/backfill/down/reapply: passed on SQLite, MySQL 8, and PostgreSQL 16.
-- SQLite: 165 tests, 163 passed, 2 engine-specific skips, 806 assertions.
-- MySQL 8: 165 passed, 823 assertions; production concurrency tests enabled.
-- PostgreSQL 16: 165 passed, 823 assertions; production concurrency tests enabled.
+- SQLite: 166 tests, 163 passed, 3 engine-specific skips, 806 assertions.
+- MySQL 8: 166 passed, 833 assertions; all three production concurrency tests enabled.
+- PostgreSQL 16: 166 passed, 833 assertions; all three production concurrency tests enabled.
 - Pint, PHP syntax, Composer strict validation, locked dependency audit, Postman JSON,
   workflow YAML, scheduler discovery, and `git diff --check`: passed.
 - Final requirement/task/checklist convergence: no critical, high, or medium gaps.

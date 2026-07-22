@@ -58,7 +58,8 @@ Test-only JSON result written by each child process:
 | `message` | string/null | Diagnostic only for error results |
 
 The parent accepts only known outcomes, zero exit status, and results written before the
-timeout.
+timeout. For order mode, the parent supplies a positive requested quantity; this lets the
+same protocol prove single-unit and multi-unit contention without changing result shapes.
 
 ## Listing Query Contracts
 

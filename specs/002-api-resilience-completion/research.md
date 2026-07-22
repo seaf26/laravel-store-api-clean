@@ -46,6 +46,8 @@ cannot cover external delivery.
 **Decision**: Launch independent PHP processes through the existing process component.
 Each process boots the application, reconnects to the shared database, writes a ready
 marker, waits behind a file barrier, performs one operation, and writes strict JSON output.
+Order workers accept the requested quantity so the same protocol covers both last-unit and
+competing multi-unit allocation boundaries.
 
 **Rationale**: Separate processes provide distinct database connections and genuinely
 overlap the row-lock window. A bounded file barrier is portable in CI and does not require

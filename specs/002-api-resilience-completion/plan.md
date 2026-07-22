@@ -126,8 +126,9 @@ barriers, cross-database CI, and collection validation.
 - Back-in-stock subscriptions are deleted only after a new or already-existing durable
   notification is confirmed. Other delivery errors leave them for retry.
 - Add a production-only feature test that uses two Symfony Process children, ready files,
-  a release barrier, strict timeouts, and JSON result files. Exercise one-unit ordering and
-  notification identity races against shared MySQL/PostgreSQL databases.
+  a release barrier, strict timeouts, and JSON result files. Exercise last-unit ordering,
+  competing multi-unit ordering, and notification identity races against shared
+  MySQL/PostgreSQL databases.
 - Extend CI with PostgreSQL and ensure both production database jobs execute the overlap
   group. SQLite explicitly skips these tests.
 - Add dedicated product/order index Form Requests. Controllers construct queries only

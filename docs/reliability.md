@@ -14,6 +14,7 @@ define the exact changed status codes, headers, and error bodies.
 | Login | `POST /api/auth/login` | Five attempts per minute for both the client source and normalized phone | `429` with `Retry-After` when either bucket is exhausted |
 | OTP issue | Registration, verification request, and forgot-password | Delivered/pending issue window plus 20 per minute per client source; failed deliveries refund only the phone bucket | Registration delivery failure is `503`; public recovery/request responses remain enumeration-safe and carry retry guidance |
 | OTP redemption | Verification and password reset | Five attempts per minute per source and phone/purpose plus an atomic claim | One code can produce at most one successful action |
+| Stock allocation | `POST /api/orders` | Transaction plus stable-order product row locks | Concurrent demand is serialized; accepted quantities never exceed committed stock |
 | Order retry | `POST /api/orders` with `Idempotency-Key` | Canonical SHA-256 request fingerprint stored with the key | Matching payload replays with `200`; different payload returns `409` |
 | Status mutation | `PATCH /api/orders/{order}/status` | Reload and row-lock the order inside the transaction | Stale requests use committed state; duplicate status is a no-op |
 | Product media | Product create, update, and delete | Transactional deletion intent plus compensating cleanup | Failed persistence keeps the referenced image; failed file deletion is retried |
@@ -162,6 +163,13 @@ unique-constraint signature is converted into the concurrent replay path. Connec
 deadlocks, foreign-key violations, malformed SQL, and every other query failure propagate
 unchanged and roll back the transaction.
 
+When two users request the same product concurrently, the first transaction to acquire the
+product lock reads, checks, and decrements stock before releasing it. The waiting transaction
+then reads the committed remainder rather than its earlier view. It succeeds only if that
+remainder covers its complete requested quantity; otherwise it returns `422` without an
+order, order item, or stock mutation. The production harness proves the one-unit boundary
+and a partial-remainder case where stock is three and both buyers request two.
+
 ## Order status mutation
 
 ```mermaid
@@ -286,8 +294,8 @@ php artisan schedule:list
 GitHub Actions repeats the suite on SQLite, MySQL 8, and PostgreSQL 16. SQLite is the fast
 local path and intentionally skips the engine-specific production concurrency test. The
 MySQL and PostgreSQL jobs launch two independent PHP processes, synchronize them behind a
-shared barrier, and require both the one-unit stock race and notification-deduplication
-race to run without skips before the complete suite executes.
+shared barrier, and require the one-unit stock race, competing multi-unit stock race, and
+notification-deduplication race to run without skips before the complete suite executes.
 
 The same focused multi-process tests have been run locally against disposable MySQL 8 and
 PostgreSQL 16 databases. A hosted GitHub Actions result is still a separate verification

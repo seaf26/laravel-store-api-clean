@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 
-[$script, $mode, $barrier, $ready, $result, $userId, $subjectId] = $argv + array_fill(0, 7, null);
+[$script, $mode, $barrier, $ready, $result, $userId, $subjectId, $quantity] = $argv + array_fill(0, 8, null);
 
 if (! is_string($mode) || ! is_string($barrier) || ! is_string($ready) || ! is_string($result)) {
     fwrite(STDERR, "Invalid worker arguments.\n");
@@ -44,10 +44,16 @@ try {
     $user = User::findOrFail((int) $userId);
 
     if ($mode === 'order') {
+        $requestedQuantity = (int) ($quantity ?? 1);
+
+        if ($requestedQuantity < 1) {
+            throw new InvalidArgumentException('Order quantity must be positive.');
+        }
+
         try {
             $placed = $app->make(OrderService::class)->place(
                 $user,
-                [['product_id' => (int) $subjectId, 'quantity' => 1]],
+                [['product_id' => (int) $subjectId, 'quantity' => $requestedQuantity]],
                 null,
             );
             $writeResult(['outcome' => 'created', 'order_id' => $placed->order->id]);

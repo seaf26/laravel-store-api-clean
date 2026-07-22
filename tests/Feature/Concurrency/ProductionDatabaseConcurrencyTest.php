@@ -27,6 +27,23 @@ class ProductionDatabaseConcurrencyTest extends TestCase
         $this->assertSame(0, $product->fresh()->stock);
     }
 
+    public function test_two_independent_buyers_cannot_oversell_shared_multi_unit_stock(): void
+    {
+        $this->requireProductionConcurrencyEnvironment();
+        $product = Product::factory()->create(['stock' => 3, 'price' => 10]);
+        $users = User::factory()->count(2)->create();
+
+        $results = $this->race('order', [$users[0]->id, $users[1]->id], $product->id, quantity: 2);
+
+        $this->assertSame(['created', 'insufficient_stock'], collect($results)->pluck('outcome')->sort()->values()->all());
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseHas('order_items', [
+            'product_id' => $product->id,
+            'quantity' => 2,
+        ]);
+        $this->assertSame(1, $product->fresh()->stock);
+    }
+
     public function test_two_independent_workers_create_one_durable_notification(): void
     {
         $this->requireProductionConcurrencyEnvironment();
@@ -43,7 +60,7 @@ class ProductionDatabaseConcurrencyTest extends TestCase
      * @param  array{0: int, 1: int}  $userIds
      * @return array<int, array{outcome: string, order_id: ?int, message?: string}>
      */
-    private function race(string $mode, array $userIds, int $subjectId): array
+    private function race(string $mode, array $userIds, int $subjectId, int $quantity = 1): array
     {
         $directory = sys_get_temp_dir().'/store-api-concurrency-'.Str::uuid();
         File::makeDirectory($directory, 0700, true);
@@ -63,6 +80,7 @@ class ProductionDatabaseConcurrencyTest extends TestCase
                     $result,
                     (string) $userId,
                     (string) $subjectId,
+                    (string) $quantity,
                 ], base_path(), $this->childEnvironment(), null, 25);
                 $process->start();
                 $processes[] = compact('process', 'ready', 'result');

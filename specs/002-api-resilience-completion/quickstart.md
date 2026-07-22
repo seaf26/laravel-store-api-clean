@@ -38,9 +38,10 @@ validation, and unchanged success responses.
 ## Production database validation
 
 Run the full suite once with each supported production connection. The specialized test
-must execute—not skip—and must report one successful order, one insufficient-stock result,
-one order row, and zero remaining stock. It also races one logical notification and
-expects one durable record.
+must execute—not skip—and prove both inventory boundaries: two buyers racing for the last
+unit leave one order and stock zero; two buyers each requesting two units from stock three
+leave one order and stock one. Both produce one insufficient-stock result. The harness also
+races one logical notification and expects one durable record.
 
 The CI workflow is the canonical reproducible environment for both database families.
 
