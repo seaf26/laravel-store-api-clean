@@ -3,11 +3,16 @@
 namespace App\Services\Notifications;
 
 use App\Models\User;
+use App\Support\Database\UniqueConstraintViolationDetector;
 use Illuminate\Database\QueryException;
 use Illuminate\Notifications\Notification;
 
 class NotificationDeduplicator
 {
+    public function __construct(
+        private readonly UniqueConstraintViolationDetector $uniqueViolations,
+    ) {}
+
     public function sendOnce(User $recipient, Notification $notification, string $logicalKey): bool
     {
         $notification->id = $this->idFor($recipient, $notification, $logicalKey);
@@ -21,7 +26,7 @@ class NotificationDeduplicator
 
             return true;
         } catch (QueryException $exception) {
-            if ($this->isUniqueViolation($exception)) {
+            if ($this->uniqueViolations->causedBy($exception, 'notifications.id')) {
                 return false;
             }
 
@@ -49,22 +54,5 @@ class NotificationDeduplicator
             substr($hex, 16, 4),
             substr($hex, 20, 12),
         );
-    }
-
-    private function isUniqueViolation(QueryException $exception): bool
-    {
-        $state = (string) ($exception->errorInfo[0] ?? $exception->getCode());
-        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
-
-        if ($state === '23505' || ($state === '23000' && $driverCode === 1062)) {
-            return true;
-        }
-
-        return $state === '23000'
-            && $driverCode === 19
-            && str_contains(
-                strtolower((string) ($exception->errorInfo[2] ?? $exception->getMessage())),
-                'unique constraint failed: notifications.id',
-            );
     }
 }

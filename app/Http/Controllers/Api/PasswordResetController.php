@@ -3,18 +3,23 @@
 namespace App\Http\Controllers\Api;
 
 use App\Enums\OtpPurpose;
+use App\Exceptions\OtpDeliveryFailedException;
 use App\Exceptions\TooManyOtpRequestsException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Models\User;
+use App\Services\Otp\OtpDeliveryAttemptState;
 use App\Services\Otp\OtpService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
 class PasswordResetController extends Controller
 {
-    public function __construct(private readonly OtpService $otp) {}
+    public function __construct(
+        private readonly OtpService $otp,
+        private readonly OtpDeliveryAttemptState $deliveryAttempt,
+    ) {}
 
     /**
      * Send a password reset code to a registered phone number.
@@ -26,6 +31,9 @@ class PasswordResetController extends Controller
         if (User::where('phone', $phone)->exists()) {
             try {
                 $this->otp->issue($phone, OtpPurpose::PasswordReset);
+            } catch (OtpDeliveryFailedException $exception) {
+                $this->deliveryAttempt->markFailed();
+                report($exception);
             } catch (TooManyOtpRequestsException) {
                 // Keep the public response indistinguishable when the
                 // database/lock guard rejects delivery independently of the
@@ -37,6 +45,8 @@ class PasswordResetController extends Controller
         // enumerate registered phone numbers.
         return response()->json([
             'message' => 'If the phone number is registered, a reset code has been sent.',
+        ], 200, [
+            'Retry-After' => (string) OtpDeliveryFailedException::RETRY_AFTER_SECONDS,
         ]);
     }
 

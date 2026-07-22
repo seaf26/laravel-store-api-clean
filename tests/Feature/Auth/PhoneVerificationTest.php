@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Mockery;
+use RuntimeException;
 use Tests\TestCase;
 
 class PhoneVerificationTest extends TestCase
@@ -35,6 +36,7 @@ class PhoneVerificationTest extends TestCase
         $this->assertSame(1, $sms->countFor('+201234567890'));
         // The code itself is stored only as a hash.
         $this->assertNotSame($sms->latestCodeFor('+201234567890'), OtpCode::first()->code_hash);
+        $this->assertNotNull(OtpCode::first()->delivered_at);
     }
 
     public function test_registration_uses_the_verification_issue_limiter(): void
@@ -152,6 +154,7 @@ class PhoneVerificationTest extends TestCase
             'code_hash' => 'stored-code-hash',
             'purpose' => OtpPurpose::PhoneVerification,
             'expires_at' => now()->addMinutes(10),
+            'delivered_at' => now(),
         ]);
 
         Hash::shouldReceive('check')
@@ -177,11 +180,85 @@ class PhoneVerificationTest extends TestCase
 
         $this->postJson('/api/auth/verify-phone/request', ['phone' => '+201234567890'])->assertOk();
         $firstCode = $sms->latestCodeFor('+201234567890');
+        $firstOtp = OtpCode::firstOrFail();
 
         $this->postJson('/api/auth/verify-phone/request', ['phone' => '+201234567890'])->assertOk();
 
+        $firstOtp->refresh();
+        $replacement = OtpCode::latest('id')->firstOrFail();
+
+        $this->assertNotNull($firstOtp->superseded_at);
+        $this->assertFalse($firstOtp->expires_at->isFuture());
+        $this->assertNull($firstOtp->consumed_at);
+        $this->assertNotNull($replacement->delivered_at);
+        $this->assertNull($replacement->delivery_failed_at);
+        $this->assertNull($replacement->superseded_at);
+        $this->assertTrue($replacement->isUsable());
+
         $this->postJson('/api/auth/verify-phone', ['phone' => '+201234567890', 'code' => $firstCode])
             ->assertStatus(422);
+    }
+
+    public function test_failed_delivery_is_persisted_and_does_not_consume_the_phone_issue_limit(): void
+    {
+        $attemptedCodes = [];
+        $sms = Mockery::mock(SmsSender::class);
+        $sms->shouldReceive('send')
+            ->times(3)
+            ->andReturnUsing(function (string $phone, string $message) use (&$attemptedCodes): never {
+                preg_match('/\b(\d{4,8})\b/', $message, $matches);
+                $attemptedCodes[] = $matches[1];
+
+                throw new RuntimeException('Twilio unavailable');
+            });
+        $this->app->instance(SmsSender::class, $sms);
+        User::factory()->unverified()->create(['phone' => '+201234567890']);
+
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $this->postJson('/api/auth/verify-phone/request', ['phone' => '+201234567890'])
+                ->assertOk()
+                ->assertExactJson([
+                    'message' => 'If the phone number requires verification, a code has been sent.',
+                ])
+                ->assertHeader('Retry-After', '60')
+                ->assertHeader('X-RateLimit-Limit', '3')
+                ->assertHeader('X-RateLimit-Remaining', '3');
+        }
+
+        $this->assertDatabaseCount('otp_codes', 3);
+        $this->assertSame(3, OtpCode::whereNotNull('delivery_failed_at')->count());
+        $this->assertSame(0, OtpCode::whereNotNull('delivered_at')->count());
+        $this->assertFalse(OtpCode::latest('id')->firstOrFail()->isUsable());
+
+        foreach ($attemptedCodes as $code) {
+            $this->assertFalse(app(OtpService::class)->verify(
+                '+201234567890',
+                OtpPurpose::PhoneVerification,
+                $code,
+            ));
+        }
+    }
+
+    public function test_failed_deliveries_still_consume_the_source_issue_limit(): void
+    {
+        $sms = Mockery::mock(SmsSender::class);
+        $sms->shouldReceive('send')
+            ->times(20)
+            ->andThrow(new RuntimeException('Twilio unavailable'));
+        $this->app->instance(SmsSender::class, $sms);
+        User::factory()->unverified()->create(['phone' => '+201234567890']);
+
+        for ($attempt = 1; $attempt <= 20; $attempt++) {
+            $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.77'])
+                ->postJson('/api/auth/verify-phone/request', ['phone' => '+201234567890'])
+                ->assertOk();
+        }
+
+        $this->assertStableThrottleResponse(
+            $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.77'])
+                ->postJson('/api/auth/verify-phone/request', ['phone' => '+201234567890']),
+            20,
+        );
     }
 
     public function test_code_requests_are_rate_limited_per_phone(): void

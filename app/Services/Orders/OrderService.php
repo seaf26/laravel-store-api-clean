@@ -9,13 +9,17 @@ use App\Models\IdempotencyKey;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\Database\UniqueConstraintViolationDetector;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class OrderService
 {
-    public function __construct(private readonly OrderRequestFingerprint $fingerprint) {}
+    public function __construct(
+        private readonly OrderRequestFingerprint $fingerprint,
+        private readonly UniqueConstraintViolationDetector $uniqueViolations,
+    ) {}
 
     /**
      * Place an order atomically.
@@ -94,6 +98,13 @@ class OrderService
                             'order_id' => $order->id,
                         ]);
                     } catch (QueryException $e) {
+                        if (! $this->uniqueViolations->causedBy(
+                            $e,
+                            'idempotency_keys.user_id, idempotency_keys.key',
+                        )) {
+                            throw $e;
+                        }
+
                         throw new DuplicateOrderException(previous: $e);
                     }
                 }

@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\Otp\OtpDeliveryAttemptState;
 use App\Services\Sms\LogSmsSender;
 use App\Services\Sms\SmsSender;
 use App\Services\Sms\TwilioSmsSender;
@@ -9,6 +10,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Symfony\Component\HttpFoundation\Response;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -17,6 +19,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->scoped(OtpDeliveryAttemptState::class);
+
         // Resolve the SMS gateway from configuration. Adding a real provider
         // means implementing SmsSender and registering it here.
         $this->app->bind(SmsSender::class, function () {
@@ -79,9 +83,12 @@ class AppServiceProvider extends ServiceProvider
      */
     private function issueLimits(Request $request, string $purpose, callable $response): array
     {
+        $deliveryAttempt = $this->app->make(OtpDeliveryAttemptState::class);
+
         return [
             Limit::perMinutes(10, 3)
                 ->by('phone:'.$this->limiterDigest($purpose.'-phone', $this->canonicalPhone($request)))
+                ->after(fn (Response $response): bool => ! $deliveryAttempt->consumeFailure())
                 ->response($response),
             Limit::perMinute(20)
                 ->by('source:'.$this->limiterDigest($purpose.'-source', (string) $request->ip()))

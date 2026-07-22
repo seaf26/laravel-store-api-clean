@@ -9,7 +9,16 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Prunable;
 
-#[Fillable(['phone', 'code_hash', 'purpose', 'expires_at', 'consumed_at'])]
+#[Fillable([
+    'phone',
+    'code_hash',
+    'purpose',
+    'expires_at',
+    'consumed_at',
+    'delivered_at',
+    'delivery_failed_at',
+    'superseded_at',
+])]
 #[Hidden(['code_hash'])]
 class OtpCode extends Model
 {
@@ -33,14 +42,21 @@ class OtpCode extends Model
             'purpose' => OtpPurpose::class,
             'expires_at' => 'datetime',
             'consumed_at' => 'datetime',
+            'delivered_at' => 'datetime',
+            'delivery_failed_at' => 'datetime',
+            'superseded_at' => 'datetime',
         ];
     }
 
     /**
-     * A code is usable while it is neither consumed nor expired.
+     * Only a successfully delivered, current, unspent code can be redeemed.
      */
     public function isUsable(): bool
     {
-        return is_null($this->consumed_at) && $this->expires_at->isFuture();
+        return ! is_null($this->delivered_at)
+            && is_null($this->delivery_failed_at)
+            && is_null($this->superseded_at)
+            && is_null($this->consumed_at)
+            && $this->expires_at->isFuture();
     }
 }

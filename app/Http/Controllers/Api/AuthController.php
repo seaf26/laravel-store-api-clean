@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Enums\OtpPurpose;
+use App\Exceptions\OtpDeliveryFailedException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Otp\OtpDeliveryAttemptState;
 use App\Services\Otp\OtpService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,7 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function __construct(private readonly OtpService $otp) {}
+    public function __construct(
+        private readonly OtpService $otp,
+        private readonly OtpDeliveryAttemptState $deliveryAttempt,
+    ) {}
 
     /**
      * Register a new account using a phone number.
@@ -25,7 +30,18 @@ class AuthController extends Controller
     {
         $user = User::create($request->validated());
 
-        $this->otp->issue($user->phone, OtpPurpose::PhoneVerification);
+        try {
+            $this->otp->issue($user->phone, OtpPurpose::PhoneVerification);
+        } catch (OtpDeliveryFailedException $exception) {
+            $this->deliveryAttempt->markFailed();
+            report($exception);
+
+            return response()->json([
+                'message' => 'Account created, but the verification code could not be delivered. Please request a new code later.',
+            ], 503, [
+                'Retry-After' => (string) OtpDeliveryFailedException::RETRY_AFTER_SECONDS,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Account created. A verification code has been sent to your phone.',

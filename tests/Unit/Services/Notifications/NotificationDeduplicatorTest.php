@@ -6,13 +6,14 @@ use App\Models\Product;
 use App\Models\User;
 use App\Notifications\NewProductNotification;
 use App\Services\Notifications\NotificationDeduplicator;
+use App\Support\Database\UniqueConstraintViolationDetector;
 use PHPUnit\Framework\TestCase;
 
 class NotificationDeduplicatorTest extends TestCase
 {
     public function test_the_same_recipient_event_and_notification_produce_the_same_uuid(): void
     {
-        $service = new NotificationDeduplicator;
+        $service = new NotificationDeduplicator(new UniqueConstraintViolationDetector);
         $user = (new User)->forceFill(['id' => 42]);
         $notification = new NewProductNotification((new Product)->forceFill(['id' => 7]));
 
@@ -28,7 +29,7 @@ class NotificationDeduplicatorTest extends TestCase
 
     public function test_recipient_or_event_changes_produce_different_ids(): void
     {
-        $service = new NotificationDeduplicator;
+        $service = new NotificationDeduplicator(new UniqueConstraintViolationDetector);
         $product = (new Product)->forceFill(['id' => 7]);
         $notification = new NewProductNotification($product);
         $firstUser = (new User)->forceFill(['id' => 1]);

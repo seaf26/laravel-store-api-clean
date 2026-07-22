@@ -3,18 +3,23 @@
 namespace App\Http\Controllers\Api;
 
 use App\Enums\OtpPurpose;
+use App\Exceptions\OtpDeliveryFailedException;
 use App\Exceptions\TooManyOtpRequestsException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\RequestVerificationCodeRequest;
 use App\Http\Requests\Auth\VerifyPhoneRequest;
 use App\Models\User;
+use App\Services\Otp\OtpDeliveryAttemptState;
 use App\Services\Otp\OtpService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
 class PhoneVerificationController extends Controller
 {
-    public function __construct(private readonly OtpService $otp) {}
+    public function __construct(
+        private readonly OtpService $otp,
+        private readonly OtpDeliveryAttemptState $deliveryAttempt,
+    ) {}
 
     /**
      * Send (or resend) a phone verification code.
@@ -30,6 +35,9 @@ class PhoneVerificationController extends Controller
         if ($user && ! $user->hasVerifiedPhone()) {
             try {
                 $this->otp->issue($phone, OtpPurpose::PhoneVerification);
+            } catch (OtpDeliveryFailedException $exception) {
+                $this->deliveryAttempt->markFailed();
+                report($exception);
             } catch (TooManyOtpRequestsException) {
                 // The named middleware is the public throttling contract. The
                 // database/lock guard is defense in depth and must not make a
@@ -39,6 +47,8 @@ class PhoneVerificationController extends Controller
 
         return response()->json([
             'message' => 'If the phone number requires verification, a code has been sent.',
+        ], 200, [
+            'Retry-After' => (string) OtpDeliveryFailedException::RETRY_AFTER_SECONDS,
         ]);
     }
 

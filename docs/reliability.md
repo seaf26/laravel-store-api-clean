@@ -4,6 +4,7 @@ This document is the authoritative architecture view for the API reliability con
 The [Postman collection](postman_collection.json) contains runnable HTTP examples, while
 the [P0 feature contract](../specs/001-api-reliability-hardening/contracts/api-contract.md)
 and [resilience-completion contract](../specs/002-api-resilience-completion/contracts/api-contract.md)
+and [OTP delivery resilience contract](../specs/003-otp-delivery-resilience/contracts/api-contract.md)
 define the exact changed status codes, headers, and error bodies.
 
 ## Public behavior map
@@ -11,7 +12,7 @@ define the exact changed status codes, headers, and error bodies.
 | Concern | Boundary | Control | Public result |
 | --- | --- | --- | --- |
 | Login | `POST /api/auth/login` | Five attempts per minute for both the client source and normalized phone | `429` with `Retry-After` when either bucket is exhausted |
-| OTP issue | Registration, verification request, and forgot-password | Three attempts per ten minutes per phone/purpose and 20 per minute per client source | Stable `429`; public recovery/request responses do not reveal account existence |
+| OTP issue | Registration, verification request, and forgot-password | Delivered/pending issue window plus 20 per minute per client source; failed deliveries refund only the phone bucket | Registration delivery failure is `503`; public recovery/request responses remain enumeration-safe and carry retry guidance |
 | OTP redemption | Verification and password reset | Five attempts per minute per source and phone/purpose plus an atomic claim | One code can produce at most one successful action |
 | Order retry | `POST /api/orders` with `Idempotency-Key` | Canonical SHA-256 request fingerprint stored with the key | Matching payload replays with `200`; different payload returns `409` |
 | Status mutation | `PATCH /api/orders/{order}/status` | Reload and row-lock the order inside the transaction | Stale requests use committed state; duplicate status is a no-op |
@@ -20,6 +21,10 @@ define the exact changed status codes, headers, and error bodies.
 | Listing filters | `GET /api/products` and `GET /api/orders` | Dedicated Form Requests with allow-listed values | Invalid filters return `422` instead of being silently cast |
 | OTP retention | Scheduler | Daily `model:prune` | Consumed or expired OTP rows older than one day are removed |
 | Image cleanup | Scheduler | Five-minute `product-images:cleanup` retry | Durable pending deletions are retried idempotently |
+
+OTP records also carry `delivered_at`, `delivery_failed_at`, and `superseded_at`. A code is
+usable only when delivery succeeded and failure, supersession, consumption, and expiry are
+all absent. Historical rows are backfilled as delivered during the additive migration.
 
 ## Reliability data model
 
@@ -73,16 +78,25 @@ sequenceDiagram
     else allowed issue
         R->>O: issue(phone, purpose)
         O->>L: acquire HMAC(phone + purpose) lock
-        L->>D: transaction: check issue count
-        D->>D: consume earlier usable codes
-        D->>D: insert bcrypt-hashed replacement
+        L->>D: transaction: check non-failed issue count
+        D->>D: expire + supersede earlier active codes
+        D->>D: insert bcrypt-hashed pending replacement
         D-->>L: commit
         L-->>O: release
         O->>S: deliver code after commit
-        O-->>C: stable public response
+        alt sender accepts
+            S-->>O: accepted
+            O->>D: set delivered_at
+            O-->>C: success + Retry-After guidance
+        else sender throws
+            S-->>O: delivery failure
+            O->>D: set delivery_failed_at + expire
+            O->>R: refund phone bucket only
+            O-->>C: safe endpoint-specific response
+        end
     else allowed redemption
         R->>O: verify(phone, purpose, code)
-        O->>D: load latest usable code
+        O->>D: load latest delivered/current/usable code
         O->>O: verify bcrypt hash
         O->>D: conditional claim where unused and unexpired
         alt exactly one row claimed
@@ -95,7 +109,11 @@ sequenceDiagram
 
 Limiter and lock keys use keyed HMAC derivation; raw phone numbers are not stored in those
 keys. SMS delivery occurs after the issuance transaction and lock have completed, so a
-rolled-back code is never sent.
+rolled-back code is never sent. Failed delivery rows remain auditable but are immediately
+unusable and excluded from the phone-specific issue count. The source ceiling still counts
+them. Registration can safely report `503` because that request just created the account;
+resend/recovery retain their generic body because a provider-specific result would expose
+whether the submitted phone exists.
 
 ## Order placement and idempotency
 
@@ -138,6 +156,11 @@ sequenceDiagram
 The request hash represents the client's normalized order intent, not mutable prices,
 stock, order status, or the response body. Keys longer than 64 characters are rejected
 with the standard `422` validation envelope.
+
+Only a recognized PostgreSQL `23505`, MySQL/MariaDB `23000/1062`, or matching SQLite
+unique-constraint signature is converted into the concurrent replay path. Connection loss,
+deadlocks, foreign-key violations, malformed SQL, and every other query failure propagate
+unchanged and roll back the transaction.
 
 ## Order status mutation
 
@@ -236,7 +259,9 @@ sequenceDiagram
 
 The database channel is deliberately first for mixed-channel notifications. A duplicate
 worker cannot reach SMS. Back-in-stock subscriptions are deleted only after durable
-delivery, so transient database failures remain retryable.
+delivery, so transient database failures remain retryable. Notification and order-key
+deduplication use the same strict database-error classifier; only the expected unique
+identity is a no-op/replay.
 
 ## Listing validation
 

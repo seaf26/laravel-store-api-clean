@@ -77,6 +77,55 @@ class ProductManagementTest extends TestCase
             ->assertJsonValidationErrors(['title', 'price', 'description', 'stock', 'image']);
     }
 
+    public function test_product_creation_accepts_one_thousand_description_characters(): void
+    {
+        Storage::fake('public');
+
+        $this->actingAs($this->admin())->postJson('/api/products', [
+            'title' => 'Long Description Product',
+            'price' => 49.99,
+            'description' => str_repeat('a', 1000),
+            'stock' => 25,
+            'image' => UploadedFile::fake()->image('product.jpg'),
+        ])->assertCreated();
+
+        $this->assertSame(1000, strlen(Product::firstOrFail()->description));
+    }
+
+    public function test_product_creation_rejects_more_than_one_thousand_description_characters(): void
+    {
+        Storage::fake('public');
+
+        $this->actingAs($this->admin())->postJson('/api/products', [
+            'title' => 'Oversized Description Product',
+            'price' => 49.99,
+            'description' => str_repeat('a', 1001),
+            'stock' => 25,
+            'image' => UploadedFile::fake()->image('product.jpg'),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('description');
+
+        $this->assertDatabaseCount('products', 0);
+    }
+
+    public function test_product_update_enforces_the_description_boundary_without_mutating_on_failure(): void
+    {
+        $product = Product::factory()->create(['description' => 'Original description']);
+        $admin = $this->admin();
+
+        $this->actingAs($admin)->putJson("/api/products/{$product->id}", [
+            'description' => str_repeat('b', 1000),
+        ])->assertOk();
+        $this->assertSame(1000, strlen($product->fresh()->description));
+
+        $this->actingAs($admin)->putJson("/api/products/{$product->id}", [
+            'description' => str_repeat('c', 1001),
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('description');
+
+        $this->assertSame(str_repeat('b', 1000), $product->fresh()->description);
+    }
+
     public function test_updating_a_product_replaces_the_old_image(): void
     {
         Storage::fake('public');
