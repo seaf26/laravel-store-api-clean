@@ -42,6 +42,22 @@
               "body": "{\n  \"message\": \"Account created. A verification code has been sent to your phone.\",\n  \"user\": {\n    \"id\": 1,\n    \"name\": \"Saif Jamil\",\n    \"phone\": \"+201156683335\",\n    \"is_admin\": false,\n    \"phone_verified_at\": null,\n    \"created_at\": \"2026-07-20T13:00:00+00:00\"\n  }\n}"
             },
             {
+              "name": "503 SMS delivery unavailable",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/auth/register", "host": ["{{base_url}}"], "path": ["api", "auth", "register"] },
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"Saif Jamil\",\n  \"phone\": \"+201156683335\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\"\n}" }
+              },
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [
+                { "key": "Content-Type", "value": "application/json" },
+                { "key": "Retry-After", "value": "60" }
+              ],
+              "body": "{\n  \"message\": \"Account created, but the verification code could not be delivered. Please request a new code later.\"\n}"
+            },
+            {
               "name": "422 Validation error",
               "originalRequest": {
                 "method": "POST",
@@ -73,7 +89,10 @@
               "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/auth/verify-phone/request", "host": ["{{base_url}}"], "path": ["api", "auth", "verify-phone", "request"] } },
               "status": "OK",
               "code": 200,
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "header": [
+                { "key": "Content-Type", "value": "application/json" },
+                { "key": "Retry-After", "value": "60" }
+              ],
               "body": "{\n  \"message\": \"If the phone number requires verification, a code has been sent.\"\n}"
             },
             {
@@ -308,7 +327,10 @@
               "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/auth/password/forgot", "host": ["{{base_url}}"], "path": ["api", "auth", "password", "forgot"] } },
               "status": "OK",
               "code": 200,
-              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "header": [
+                { "key": "Content-Type", "value": "application/json" },
+                { "key": "Retry-After", "value": "60" }
+              ],
               "body": "{\n  \"message\": \"If the phone number is registered, a reset code has been sent.\"\n}"
             }
           ]
@@ -472,6 +494,18 @@
               "code": 422,
               "header": [{ "key": "Content-Type", "value": "application/json" }],
               "body": "{\n  \"message\": \"The title field is required. (and 2 more errors)\",\n  \"errors\": {\n    \"title\": [\"The title field is required.\"],\n    \"price\": [\"The price field must be at least 0.\"],\n    \"image\": [\"The image field must be an image.\"]\n  }\n}"
+            },
+            {
+              "name": "422 Description exceeds 1000 characters",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Accept", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/products", "host": ["{{base_url}}"], "path": ["api", "products"] }
+              },
+              "status": "Unprocessable Content",
+              "code": 422,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"message\": \"The description field must not be greater than 1000 characters.\",\n  \"errors\": {\n    \"description\": [\"The description field must not be greater than 1000 characters.\"]\n  }\n}"
             }
           ]
         },

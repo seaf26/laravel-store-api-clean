@@ -5,8 +5,11 @@ namespace Tests\Feature\Auth;
 use App\Enums\OtpPurpose;
 use App\Models\OtpCode;
 use App\Models\User;
+use App\Services\Sms\SmsSender;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Mockery;
+use RuntimeException;
 use Tests\TestCase;
 
 class PasswordResetTest extends TestCase
@@ -149,6 +152,33 @@ class PasswordResetTest extends TestCase
             ->assertJsonPath('message', 'If the phone number is registered, a reset code has been sent.');
 
         $this->assertSame(0, $sms->countFor('+209999999999'));
+    }
+
+    public function test_forgot_password_records_delivery_failure_without_exposing_provider_details(): void
+    {
+        $sms = Mockery::mock(SmsSender::class);
+        $sms->shouldReceive('send')
+            ->once()
+            ->andThrow(new RuntimeException('Twilio token rejected'));
+        $this->app->instance(SmsSender::class, $sms);
+        User::factory()->create(['phone' => '+201234567890']);
+
+        $response = $this->postJson('/api/auth/password/forgot', [
+            'phone' => '+201234567890',
+        ]);
+
+        $response->assertOk()
+            ->assertHeader('Retry-After', '60')
+            ->assertHeader('X-RateLimit-Limit', '3')
+            ->assertHeader('X-RateLimit-Remaining', '3')
+            ->assertExactJson([
+                'message' => 'If the phone number is registered, a reset code has been sent.',
+            ]);
+        $this->assertStringNotContainsString('Twilio', $response->getContent());
+
+        $failedOtp = OtpCode::firstOrFail();
+        $this->assertNotNull($failedOtp->delivery_failed_at);
+        $this->assertFalse($failedOtp->isUsable());
     }
 
     public function test_known_and_unknown_phones_receive_the_same_forgot_password_responses(): void

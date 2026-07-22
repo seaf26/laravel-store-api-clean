@@ -3,6 +3,7 @@
 namespace App\Services\Otp;
 
 use App\Enums\OtpPurpose;
+use App\Exceptions\OtpDeliveryFailedException;
 use App\Exceptions\TooManyOtpRequestsException;
 use App\Models\OtpCode;
 use App\Services\Sms\SmsSender;
@@ -10,6 +11,7 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Throwable;
 
 class OtpService
 {
@@ -21,33 +23,43 @@ class OtpService
      * The plain code is never returned to the caller so it cannot leak into an
      * API response — the SMS gateway is the only delivery channel.
      *
+     * @throws OtpDeliveryFailedException
      * @throws TooManyOtpRequestsException
      */
     public function issue(string $phone, OtpPurpose $purpose): void
     {
         try {
-            $code = Cache::lock($this->issueLockKey($phone, $purpose), 5)
-                ->block(1, fn () => DB::transaction(function () use ($phone, $purpose): string {
+            [$otp, $code] = Cache::lock($this->issueLockKey($phone, $purpose), 5)
+                ->block(1, fn () => DB::transaction(function () use ($phone, $purpose): array {
                     $this->assertWithinRateLimit($phone, $purpose);
 
-                    // Mark older codes consumed rather than deleting them, so
-                    // they continue to count against the issue window.
+                    $supersededAt = now();
+
+                    // Preserve why older codes became unusable. Pending rows
+                    // are included because an earlier provider call may still
+                    // be in flight after releasing the issuance lock.
                     OtpCode::query()
                         ->where('phone', $phone)
                         ->where('purpose', $purpose)
                         ->whereNull('consumed_at')
-                        ->update(['consumed_at' => now()]);
+                        ->whereNull('delivery_failed_at')
+                        ->whereNull('superseded_at')
+                        ->where('expires_at', '>', $supersededAt)
+                        ->update([
+                            'superseded_at' => $supersededAt,
+                            'expires_at' => $supersededAt,
+                        ]);
 
                     $code = $this->generateCode();
 
-                    OtpCode::create([
+                    $otp = OtpCode::create([
                         'phone' => $phone,
                         'code_hash' => Hash::make($code),
                         'purpose' => $purpose,
                         'expires_at' => now()->addMinutes($this->ttlMinutes()),
                     ]);
 
-                    return $code;
+                    return [$otp, $code];
                 }, 3));
         } catch (LockTimeoutException) {
             throw new TooManyOtpRequestsException;
@@ -55,13 +67,38 @@ class OtpService
 
         // The database commit and distributed lock release both happen before
         // the external delivery side effect.
-        $this->sms->send($phone, sprintf(
-            'Your %s %s code is %s. It expires in %d minutes.',
-            config('app.name'),
-            $purpose->smsLabel(),
-            $code,
-            $this->ttlMinutes(),
-        ));
+        try {
+            $this->sms->send($phone, sprintf(
+                'Your %s %s code is %s. It expires in %d minutes.',
+                config('app.name'),
+                $purpose->smsLabel(),
+                $code,
+                $this->ttlMinutes(),
+            ));
+        } catch (Throwable $deliveryException) {
+            $failedAt = now();
+
+            try {
+                $otp->forceFill([
+                    'delivery_failed_at' => $failedAt,
+                    'expires_at' => $failedAt,
+                ])->save();
+            } catch (Throwable $stateException) {
+                // The pending row is already unusable, but both the provider
+                // failure and failure-state persistence problem need signals.
+                report($stateException);
+            }
+
+            throw new OtpDeliveryFailedException(
+                'The verification code could not be delivered.',
+                0,
+                $deliveryException,
+            );
+        }
+
+        // A provider-success/database-failure combination must propagate. The
+        // pending row remains unusable rather than accepting an unaudited code.
+        $otp->forceFill(['delivered_at' => now()])->save();
     }
 
     /**
@@ -72,6 +109,9 @@ class OtpService
         $candidate = OtpCode::query()
             ->where('phone', $phone)
             ->where('purpose', $purpose)
+            ->whereNotNull('delivered_at')
+            ->whereNull('delivery_failed_at')
+            ->whereNull('superseded_at')
             ->whereNull('consumed_at')
             ->where('expires_at', '>', now())
             ->latest('id')
@@ -85,6 +125,9 @@ class OtpService
 
         return OtpCode::query()
             ->whereKey($candidate->getKey())
+            ->whereNotNull('delivered_at')
+            ->whereNull('delivery_failed_at')
+            ->whereNull('superseded_at')
             ->whereNull('consumed_at')
             ->where('expires_at', '>', $claimedAt)
             ->update(['consumed_at' => $claimedAt]) === 1;
@@ -102,6 +145,7 @@ class OtpService
         $recent = OtpCode::query()
             ->where('phone', $phone)
             ->where('purpose', $purpose)
+            ->whereNull('delivery_failed_at')
             ->where('created_at', '>', now()->subMinutes($this->ttlMinutes()))
             ->count();
 

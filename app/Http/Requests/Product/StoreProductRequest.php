@@ -20,7 +20,7 @@ class StoreProductRequest extends FormRequest
         return [
             'title' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0', 'max:999999.99'],
-            'description' => ['required', 'string'],
+            'description' => ['required', 'string', 'max:1000'],
             'stock' => ['required', 'integer', 'min:0'],
             'image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ];

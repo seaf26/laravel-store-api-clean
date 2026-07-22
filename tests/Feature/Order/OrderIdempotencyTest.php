@@ -6,8 +6,11 @@ use App\Models\IdempotencyKey;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Orders\OrderService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PDOException;
 use Tests\TestCase;
 
 class OrderIdempotencyTest extends TestCase
@@ -143,6 +146,33 @@ class OrderIdempotencyTest extends TestCase
         $this->assertSame(10, $product->fresh()->stock);
     }
 
+    public function test_a_non_duplicate_idempotency_query_exception_propagates_unchanged(): void
+    {
+        $failure = $this->queryException('mysql', ['08006', 2006, 'MySQL server has gone away']);
+        IdempotencyKey::creating(function () use ($failure): never {
+            throw $failure;
+        });
+
+        $user = User::factory()->create();
+        $product = Product::factory()->create(['stock' => 10]);
+
+        try {
+            app(OrderService::class)->place(
+                $user,
+                [['product_id' => $product->id, 'quantity' => 1]],
+                'database-failure',
+            );
+            $this->fail('Expected the database exception to propagate.');
+        } catch (QueryException $actual) {
+            $this->assertSame($failure, $actual);
+        } finally {
+            IdempotencyKey::flushEventListeners();
+        }
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertSame(10, $product->fresh()->stock);
+    }
+
     public function test_the_migration_backfills_a_legacy_key_from_recorded_order_items(): void
     {
         $user = User::factory()->create();
@@ -176,6 +206,22 @@ class OrderIdempotencyTest extends TestCase
         $this->assertSame(
             hash('sha256', $canonicalJson),
             DB::table('idempotency_keys')->where('id', $key->id)->value('request_hash'),
+        );
+    }
+
+    /**
+     * @param  array{0: string, 1: int, 2: string}  $errorInfo
+     */
+    private function queryException(string $connection, array $errorInfo): QueryException
+    {
+        $previous = new PDOException($errorInfo[2]);
+        $previous->errorInfo = $errorInfo;
+
+        return new QueryException(
+            $connection,
+            'insert into idempotency_keys (...) values (...)',
+            [],
+            $previous,
         );
     }
 }

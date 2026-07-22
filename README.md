@@ -151,7 +151,10 @@ and a one-way-derived normalized phone key:
 An exhausted bucket returns `429` with `Retry-After`, rate-limit headers, and
 `{"message":"Too many attempts. Please try again later."}`. Public code-request and
 forgot-password responses remain the same for known and unknown phone numbers, including
-when throttled.
+when throttled. A confirmed SMS-provider failure does not consume the phone-specific
+three-attempt allowance, but it still consumes the independent 20-per-minute source
+ceiling. Successful public resend/recovery responses include `Retry-After: 60` so clients
+do not immediately repeat a request when no message arrives.
 
 ### SMS delivery
 
@@ -167,6 +170,13 @@ Add another provider by implementing `SmsSender` and registering it in the `matc
 
 The SMS **wording** differs by purpose (`App\Enums\OtpPurpose::smsLabel()`): a sign-up code
 and a password-reset code read differently, so a customer can't confuse the two texts.
+
+OTP delivery is tracked explicitly. A new row starts pending, becomes redeemable only after
+the sender returns successfully, and is immediately expired and marked failed if Twilio (or
+another sender) throws. Registration returns a generic `503` with `Retry-After: 60` when
+that happens while retaining the unverified account for a later resend. Public verification
+resend and forgot-password routes keep their generic `200` bodies to avoid exposing which
+phone numbers have accounts; provider details are never returned.
 
 Notifications (order status changes, back-in-stock alerts) are also texted — best-effort,
 only to users with a verified phone, through the same `SmsSender` (see **Notifications**
@@ -228,6 +238,8 @@ HTTP behaviors are also recorded in the
 [`P0 reliability contract`](specs/001-api-reliability-hardening/contracts/api-contract.md)
 and the
 [`resilience-completion contract`](specs/002-api-resilience-completion/contracts/api-contract.md).
+The OTP outage, description boundary, and database-error behavior is defined in the
+[`OTP delivery resilience contract`](specs/003-otp-delivery-resilience/contracts/api-contract.md).
 
 ### Order idempotency
 
@@ -249,6 +261,9 @@ validation envelope instead of being silently cast or clamped.
 | --- | --- |
 | Products | `search` up to 200 characters; non-negative `min_price`/`max_price` with `max_price >= min_price`; boolean `in_stock`; `sort=price\|title\|created_at`; `direction=asc\|desc`; `per_page=1..100`; `page>=1` |
 | Orders | a defined order `status`; admin-only existing `user_id`; `sort=created_at\|total`; `direction=asc\|desc`; `per_page=1..100`; `page>=1` |
+
+Product `description` accepts at most 1,000 characters on both create and update. A longer
+value returns the standard `422` validation envelope and does not mutate the product.
 
 ---
 
@@ -352,9 +367,11 @@ All listeners are `ShouldQueue` + `afterCommit`.
 
 ### OTP security
 - Codes are 6 digits, generated with a CSPRNG, **stored only as a bcrypt hash**, single-use,
-  and expire after `OTP_TTL_MINUTES` (default 10). Issuing a new code invalidates the
-  previous one, and codes are scoped by purpose (a verification code can't reset a
-  password). The plain code is returned by **no** API response.
+  and expire after `OTP_TTL_MINUTES` (default 10). Issuing a new code expires and explicitly
+  supersedes every prior usable code for the same phone/purpose. Only delivered codes are
+  redeemable; pending, failed, superseded, consumed, and expired codes are rejected. Codes
+  remain scoped by purpose (a verification code can't reset a password). The plain code is
+  returned by **no** API response.
 - OTP issuance and redemption use the privacy-safe limits documented above. Request and
   forgot-password endpoints return an identical response whether or not the phone exists,
   so they cannot be used to enumerate accounts.
@@ -411,6 +428,7 @@ app/
     Sms/            SmsSender contract + LogSmsSender/TwilioSmsSender (swappable gateway)
     Otp/            OtpService (hashing, expiry, rate limiting, purpose-specific wording)
     Orders/         OrderService (atomic stock), OrderStatusService (transitions, cancel-restock)
+  Support/Database/ precise cross-database duplicate-key classification
 app/Console/Commands/CleanupProductImages.php
 database/seeders/   AdminUserSeeder, ProductSeeder
 config/store.php    OTP, SMS-sender/Twilio, and admin-seed settings

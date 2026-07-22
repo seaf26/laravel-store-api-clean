@@ -2,8 +2,12 @@
 
 namespace Tests\Feature\Auth;
 
+use App\Models\OtpCode;
 use App\Models\User;
+use App\Services\Sms\SmsSender;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery;
+use RuntimeException;
 use Tests\TestCase;
 
 class RegistrationTest extends TestCase
@@ -65,5 +69,34 @@ class RegistrationTest extends TestCase
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('password');
+    }
+
+    public function test_registration_reports_delivery_failure_and_keeps_the_unverified_account(): void
+    {
+        $sms = Mockery::mock(SmsSender::class);
+        $sms->shouldReceive('send')
+            ->once()
+            ->andThrow(new RuntimeException('Twilio unavailable'));
+        $this->app->instance(SmsSender::class, $sms);
+
+        $this->postJson('/api/auth/register', [
+            'name' => 'Sara Ali',
+            'phone' => '+201234567890',
+            'password' => 'password123',
+            'password_confirmation' => 'password123',
+        ])->assertServiceUnavailable()
+            ->assertHeader('Retry-After', '60')
+            ->assertExactJson([
+                'message' => 'Account created, but the verification code could not be delivered. Please request a new code later.',
+            ]);
+
+        $this->assertDatabaseHas('users', [
+            'phone' => '+201234567890',
+            'phone_verified_at' => null,
+        ]);
+        $failedOtp = OtpCode::firstOrFail();
+        $this->assertNotNull($failedOtp->delivery_failed_at);
+        $this->assertFalse($failedOtp->expires_at->isFuture());
+        $this->assertFalse($failedOtp->isUsable());
     }
 }

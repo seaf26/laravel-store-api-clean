@@ -16,6 +16,7 @@ use App\Notifications\Channels\SmsChannel;
 use App\Notifications\NewProductNotification;
 use App\Notifications\OrderStatusChangedNotification;
 use App\Services\Notifications\NotificationDeduplicator;
+use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
 use RuntimeException;
@@ -34,6 +35,25 @@ class NotificationDeduplicationTest extends TestCase
         $this->assertTrue($service->sendOnce($user, new NewProductNotification($product), "new-product:{$product->id}"));
         $this->assertFalse($service->sendOnce($user, new NewProductNotification($product), "new-product:{$product->id}"));
         $this->assertCount(1, $user->fresh()->notifications);
+    }
+
+    public function test_a_non_database_delivery_exception_propagates_unchanged(): void
+    {
+        $failure = new RuntimeException('notification transport failed');
+        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher->shouldReceive('send')->once()->andThrow($failure);
+        $this->app->instance(Dispatcher::class, $dispatcher);
+
+        try {
+            app(NotificationDeduplicator::class)->sendOnce(
+                User::factory()->create(),
+                new NewProductNotification(Product::factory()->create()),
+                'new-product:runtime-failure',
+            );
+            $this->fail('Expected the notification exception to propagate.');
+        } catch (RuntimeException $actual) {
+            $this->assertSame($failure, $actual);
+        }
     }
 
     public function test_database_delivery_precedes_sms_for_mixed_channel_notifications(): void
